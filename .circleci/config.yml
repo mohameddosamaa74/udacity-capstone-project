@@ -1,0 +1,110 @@
+version: 2.1
+executors:
+  python:
+    docker:
+      - image: circleci/python:3.7.3-stretch
+  aws:
+    docker:
+      - image: amazon/aws-cli
+
+
+orbs:
+  aws-eks: circleci/aws-eks@1.0.3
+  kubernetes: circleci/kubernetes@0.11.2
+
+
+jobs:
+  lint-app:
+    executor: python
+    steps:
+      - checkout
+      - run:
+          name: install dependencies
+          command: |
+            make setup
+            . venv/bin/activate
+            make install
+      - run:
+          name: run lint
+          command: |
+            . venv/bin/activate
+            make lint    
+
+  build-push-docker-image:
+    machine: true
+    working_directory: ~/app
+    steps:
+      - checkout
+      - run:
+          name: build and push docker image
+          command: |
+            docker login --username ${DOCKER_USERNAME} --password ${DOCKER_PASSWORD}
+            docker build --tag=capstone .
+            docker image ls
+            docker tag capstone mohameddosamaa74/capstone
+            docker push mohameddosamaa74/capstone
+
+  deploy-to-cluster:
+    executor: aws-eks/python3
+    parameters:
+      cluster-name:
+        description: |
+          uda-cap
+        type: string
+    steps:
+      - checkout
+      - kubernetes/install
+      - aws-eks/update-kubeconfig-with-authenticator:
+          cluster-name: << parameters.cluster-name >>
+          install-kubectl: true
+      - kubernetes/create-or-update-resource:
+          resource-file-path: deployment.yml
+          resource-name: deployment/myapp
+
+  check-cluster:
+    executor: aws-eks/python3
+    parameters:
+      cluster-name:
+        description: |
+          myapp
+        type: string
+    steps:
+      - kubernetes/install
+      - aws-eks/update-kubeconfig-with-authenticator:
+          cluster-name: << parameters.cluster-name >>
+      - run:
+          name: check cluster
+          command: |
+            kubectl get nodes -o wide
+            kubectl get deployment -A
+            kubectl get svc -A
+
+workflows:
+  deployment:
+    jobs:
+      - lint-app
+      - build-push-docker-image:
+          requires: [lint-app]
+      - aws-eks/create-cluster:
+          cluster-name: mypp
+      - deploy-to-cluster:
+          cluster-name: mypp
+          requires: [aws-eks/create-cluster]
+      - aws-eks/update-container-image:
+          cluster-name: mypp
+          container-image-updates: myapp=mohameddosamaa74/capstone
+          post-steps:
+              - kubernetes/delete-resource:
+                  resource-names: myapp
+                  resource-types: deployment
+                  wait: true
+          record: true
+          requires: [deploy-to-cluster]
+          resource-name: deployment/myapp
+      - check-cluster:
+          cluster-name: myapp
+          requires: [aws-eks/update-container-image]
+      - aws-eks/delete-cluster:
+          cluster-name: myapp
+          requires:
+            - check-cluster
