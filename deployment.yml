@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp
+  labels:
+    app: myapp
+  namespace: default
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: myapp
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: myapp
+    spec:
+      containers:
+        - image: mohameddosamaa74/capstone
+          imagePullPolicy: Always
+          name: myapp
+          ports:
+            - containerPort: 80
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: myapp
+  labels:
+    app: myapp
+spec:
+  type: LoadBalancer
+  selector:
+    app: myapp
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
